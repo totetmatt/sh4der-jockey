@@ -17,6 +17,10 @@ pub enum Channels {
     Stereo,
 }
 
+enum AudioDeviceType{
+ Input,
+ Output
+}
 pub struct Audio {
     pub l_signal: Vec<f32>,
     pub r_signal: Vec<f32>,
@@ -133,16 +137,25 @@ impl Audio {
     pub fn connect(&mut self, config: &Config) -> Result<(), String> {
         let host = cpal::default_host();
         log::info!("Available Hosts: {:?}", cpal::available_hosts());
-        let device = match &config.audio_device {
+        let (audio_device_type,device) = match &config.audio_device {
             None => host
                 .default_input_device()
+                .map( |x|  (AudioDeviceType::Input,x))
                 .ok_or("No input device is available".to_string()),
             Some(s) => {
                 let mut ret = None;
                 for dev in host.input_devices().unwrap() {
+                    log::info!("{:?}",dev.name());
                     let dev_name = dev.name().map_err(|e| e.to_string())?;
                     if dev_name.contains(s) {
-                        ret = Some(dev);
+                        ret = Some((AudioDeviceType::Input,dev));
+                    }
+                }
+                for dev in host.output_devices().unwrap() {
+                    log::info!("{:?}",dev.name());
+                    let dev_name = dev.name().map_err(|e| e.to_string())?;
+                    if dev_name.contains(s) {
+                        ret = Some((AudioDeviceType::Output,dev));
                     }
                 }
                 ret.ok_or(format!("Failed to find audio device {}", s))
@@ -154,24 +167,51 @@ impl Audio {
             device.name().unwrap_or("<no-name>".into())
         );
 
-        let supported_configs_range = device
-            .supported_input_configs()
-            .map_err(|e| e.to_string())?;
+        let   (config, sample_format) = match audio_device_type {
+            AudioDeviceType::Input => {
+                let supported_configs_range = device
+                .supported_input_configs()
+                .map_err(|e| e.to_string())?;
 
-        let supported_config = supported_configs_range
-            .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
-            .next()
-            .ok_or("no supported config?!".to_string())?
-            .with_max_sample_rate();
+                let supported_config = supported_configs_range
+                .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
+                .next()
+                .ok_or("no supported config?!".to_string())?
+                .with_max_sample_rate();
 
-        log::info!("Supported Config: {:?}", supported_config);
+                log::info!("Supported Config: {:?}", supported_config);
 
-        let config = device
-            .default_input_config()
-            .map_err(|e| e.to_string())?
-            .config();
+                let config = device
+                .default_input_config()
+                .map_err(|e| e.to_string())?
+                .config();
 
-        let sample_format = supported_config.sample_format();
+                let sample_format = supported_config.sample_format();
+                (config,sample_format)
+            },
+            AudioDeviceType::Output => {
+                let supported_configs_range = device
+                .supported_output_configs()
+                .map_err(|e| e.to_string())?;
+
+                let supported_config = supported_configs_range
+                .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
+                .next()
+                .ok_or("no supported config?!".to_string())?
+                .with_max_sample_rate();
+
+                log::info!("Supported Config: {:?}", supported_config);
+
+                let config = device
+                .default_output_config()
+                .map_err(|e| e.to_string())?
+                .config();
+
+                let sample_format = supported_config.sample_format();
+                (config,sample_format)
+            },
+        };
+      
         log::info!("Creating with config: {:?}", config);
 
         let channel_count = config.channels as usize;
